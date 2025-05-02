@@ -1,0 +1,12 @@
+[Unit]
+Description=VS Code Server
+After=network.target
+
+[Service]
+Type=simple
+User=%USER%
+ExecStart=/usr/bin/code-server --auth none --bind-addr 127.0.0.1:8080
+Restart=on-failure
+
+[Install]
+WantedBy=default.target 
