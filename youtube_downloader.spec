@@ -4,15 +4,22 @@ from PyInstaller.utils.hooks import collect_data_files
 
 block_cipher = None
 
-# Collect all PyQt6 data files (plugins, etc.)
 pyqt6_datas = collect_data_files('PyQt6')
 
 a = Analysis(
     ['youtube_downloader_gui.py'],
     pathex=[],
     binaries=[],
-    datas=[],
-    hiddenimports=[],
+    datas=pyqt6_datas,
+    hiddenimports=[
+        'PyQt6',
+        'PyQt6.QtCore',
+        'PyQt6.QtGui',
+        'PyQt6.QtWidgets',
+        'PyQt6.sip',
+        'yt_dlp',
+        'moviepy'
+    ],
     hookspath=[],
     hooksconfig={},
     runtime_hooks=[],
@@ -44,5 +51,6 @@ exe = EXE(
     argv_emulation=False,
     target_arch=None,
     codesign_identity=None,
-    entitlements_file=None
+    entitlements_file=None,
+    icon='NONE'
 ) 
