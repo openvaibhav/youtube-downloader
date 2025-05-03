@@ -1,255 +1,187 @@
-import yt_dlp
+import sys
 import os
-from moviepy.editor import VideoFileClip
+from PyQt6.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout, 
+                           QHBoxLayout, QLabel, QLineEdit, QPushButton, 
+                           QComboBox, QProgressBar, QFileDialog, QMessageBox)
+from PyQt6.QtCore import Qt, QThread, pyqtSignal
+from PyQt6.QtGui import QIcon
+from pytube import YouTube
 import re
-import time
-import random
-import ssl
-import certifi
 import subprocess
+import threading
+import time
 
-# Use certifi's certificate bundle
-ssl._create_default_https_context = lambda: ssl.create_default_context(cafile=certifi.where())
+class DownloadThread(QThread):
+    progress = pyqtSignal(int)
+    finished = pyqtSignal()
+    error = pyqtSignal(str)
 
-def sanitize_filename(filename):
-    # Remove invalid characters from filename
-    return re.sub(r'[<>:"/\\|?*]', '', filename)
+    def __init__(self, url, output_path, video_resolution, audio_bitrate):
+        super().__init__()
+        self.url = url
+        self.output_path = output_path
+        self.video_resolution = video_resolution
+        self.audio_bitrate = audio_bitrate
 
-def get_random_user_agent():
-    user_agents = [
-        'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
-        'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/92.0.4515.107 Safari/537.36',
-        'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
-        'Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:89.0) Gecko/20100101 Firefox/89.0',
-        'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/14.1.1 Safari/605.1.15'
-    ]
-    return random.choice(user_agents)
+    def run(self):
+        try:
+            yt = YouTube(self.url, on_progress_callback=self.progress_callback)
+            video_stream = yt.streams.filter(res=self.video_resolution, file_extension='mp4').first()
+            audio_stream = yt.streams.filter(only_audio=True, abr=self.audio_bitrate).first()
 
-def get_download_path():
-    default_path = os.path.join(os.getcwd(), 'downloads')
-    print(f"\nCurrent download path: {default_path}")
-    choice = input("Do you want to change the download location? (y/n): ").lower()
-    
-    if choice == 'y':
-        new_path = input("Enter the full path where you want to save the files: ")
-        # Create the directory if it doesn't exist
-        if not os.path.exists(new_path):
-            os.makedirs(new_path)
-        return new_path
-    return default_path
+            if not video_stream or not audio_stream:
+                self.error.emit("Selected streams not available")
+                return
 
-class MyLogger:
-    def debug(self, msg):
-        # For compatibility with youtube-dl, both debug and info are passed into debug
-        # You can distinguish them by the prefix '[debug] '
-        if msg.startswith('[debug] '):
-            pass
-        else:
-            self.info(msg)
+            video_path = os.path.join(self.output_path, f"video_{int(time.time())}.mp4")
+            audio_path = os.path.join(self.output_path, f"audio_{int(time.time())}.mp3")
 
-    def info(self, msg):
-        print(msg)
+            video_stream.download(output_path=self.output_path, filename=os.path.basename(video_path))
+            audio_stream.download(output_path=self.output_path, filename=os.path.basename(audio_path))
 
-    def warning(self, msg):
-        print(f"Warning: {msg}")
+            output_file = os.path.join(self.output_path, f"{yt.title}_{int(time.time())}.mp4")
+            output_file = re.sub(r'[<>:"/\\|?*]', '_', output_file)
 
-    def error(self, msg):
-        print(f"Error: {msg}")
+            ffmpeg_cmd = [
+                'ffmpeg', '-i', video_path, '-i', audio_path,
+                '-c:v', 'copy', '-c:a', 'aac', '-strict', 'experimental',
+                output_file
+            ]
 
-def download_video(url, output_path):
-    try:
-        # Create downloads directory if it doesn't exist
-        if not os.path.exists(output_path):
-            os.makedirs(output_path)
+            process = subprocess.Popen(ffmpeg_cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+            process.communicate()
 
-        ydl_opts = {
-            'format': 'best[ext=mp4]',
-            'outtmpl': os.path.join(output_path, '%(title)s.%(ext)s'),
-            'quiet': False,
-            'no_warnings': False,
-            'user_agent': get_random_user_agent(),
-            'extract_flat': True,
-            'retries': 10,
-            'fragment_retries': 10,
-            'skip_unavailable_fragments': True,
-            'ignoreerrors': True,
-            'sleep_interval': 1,
-            'max_sleep_interval': 5,
-            'http_headers': {
-                'User-Agent': get_random_user_agent(),
-                'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
-                'Accept-Language': 'en-us,en;q=0.5',
-                'Sec-Fetch-Mode': 'navigate',
-            },
-            'logger': MyLogger(),
-        }
+            os.remove(video_path)
+            os.remove(audio_path)
 
-        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-            if 'playlist' in url.lower():
-                print("Downloading playlist...")
-                ydl.download([url])
-            else:
-                print("Downloading video...")
-                ydl.download([url])
+            self.finished.emit()
+        except Exception as e:
+            self.error.emit(str(e))
 
-        # Check if any files were downloaded
-        files = os.listdir(output_path)
-        if not files:
-            print("\nNo files were downloaded. There might be an issue with the URL or the download process.")
-        else:
-            print(f"\nDownload completed! Files are saved in: {output_path}")
-            print("Downloaded files:")
-            for file in files:
-                print(f"- {file}")
+    def progress_callback(self, stream, chunk, bytes_remaining):
+        total_size = stream.filesize
+        bytes_downloaded = total_size - bytes_remaining
+        percentage = int((bytes_downloaded / total_size) * 100)
+        self.progress.emit(percentage)
 
-    except Exception as e:
-        print(f"An error occurred: {str(e)}")
+class YouTubeDownloaderGUI(QMainWindow):
+    def __init__(self):
+        super().__init__()
+        self.setWindowTitle("YouTube Downloader")
+        self.setMinimumSize(600, 400)
+        self.setWindowIcon(QIcon("icon.png"))
 
-def download_audio(url, output_path):
-    try:
-        # Create downloads directory if it doesn't exist
-        if not os.path.exists(output_path):
-            os.makedirs(output_path)
+        self.central_widget = QWidget()
+        self.setCentralWidget(self.central_widget)
+        self.layout = QVBoxLayout(self.central_widget)
 
-        # Verify FFmpeg is available
-        ffmpeg_path = os.path.join(os.getcwd(), 'ffmpeg.exe')
-        if not os.path.exists(ffmpeg_path):
-            raise Exception("FFmpeg not found. Please ensure ffmpeg.exe is in the same directory as this script.")
+        self.setup_ui()
+        self.download_thread = None
 
-        print(f"Using FFmpeg at: {ffmpeg_path}")
+    def setup_ui(self):
+        url_layout = QHBoxLayout()
+        self.url_label = QLabel("YouTube URL:")
+        self.url_input = QLineEdit()
+        self.url_input.setPlaceholderText("Enter YouTube URL")
+        url_layout.addWidget(self.url_label)
+        url_layout.addWidget(self.url_input)
+        self.layout.addLayout(url_layout)
 
-        def convert_to_mp3(input_file):
-            output_file = os.path.join(output_path, os.path.splitext(os.path.basename(input_file))[0] + '.mp3')
-            print(f"Converting {os.path.basename(input_file)} to MP3...")
-            try:
-                subprocess.run([
-                    ffmpeg_path,
-                    '-i', input_file,
-                    '-vn',
-                    '-acodec', 'libmp3lame',
-                    '-ab', '192k',
-                    '-ar', '44100',
-                    '-y',
-                    output_file
-                ], check=True)
-                print(f"Successfully converted {os.path.basename(input_file)} to MP3")
-                # Remove the original file
-                os.remove(input_file)
-                return True
-            except subprocess.CalledProcessError as e:
-                print(f"Error converting {os.path.basename(input_file)}: {str(e)}")
-                return False
+        resolution_layout = QHBoxLayout()
+        self.resolution_label = QLabel("Video Resolution:")
+        self.resolution_combo = QComboBox()
+        self.resolution_combo.addItems(["1080p", "720p", "480p", "360p"])
+        resolution_layout.addWidget(self.resolution_label)
+        resolution_layout.addWidget(self.resolution_combo)
+        self.layout.addLayout(resolution_layout)
 
-        ydl_opts = {
-            'format': 'bestaudio/best',
-            'outtmpl': os.path.join(output_path, '%(title)s.%(ext)s'),
-            'postprocessors': [{
-                'key': 'FFmpegExtractAudio',
-                'preferredcodec': 'mp3',
-                'preferredquality': '192',
-            }],
-            'quiet': False,
-            'no_warnings': False,
-            'user_agent': get_random_user_agent(),
-            'extract_flat': True,
-            'retries': 10,
-            'fragment_retries': 10,
-            'skip_unavailable_fragments': True,
-            'ignoreerrors': True,
-            'sleep_interval': 1,
-            'max_sleep_interval': 5,
-            'http_headers': {
-                'User-Agent': get_random_user_agent(),
-                'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
-                'Accept-Language': 'en-us,en;q=0.5',
-                'Sec-Fetch-Mode': 'navigate',
-            },
-            'logger': MyLogger(),
-            'ffmpeg_location': ffmpeg_path,
-            'verbose': True,
-            'postprocessor_args': {
-                'FFmpegExtractAudio': {
-                    'preferredcodec': 'mp3',
-                    'preferredquality': '192',
-                }
-            },
-            'keepvideo': False,
-            'progress_hooks': [lambda d: print(f"\rDownloading: {d.get('filename', '')} - {d.get('_percent_str', '')}", end='')],
-        }
+        bitrate_layout = QHBoxLayout()
+        self.bitrate_label = QLabel("Audio Bitrate:")
+        self.bitrate_combo = QComboBox()
+        self.bitrate_combo.addItems(["160kbps", "128kbps", "70kbps", "50kbps"])
+        bitrate_layout.addWidget(self.bitrate_label)
+        bitrate_layout.addWidget(self.bitrate_combo)
+        self.layout.addLayout(bitrate_layout)
 
-        print("Starting download...")
-        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-            if 'playlist' in url.lower():
-                print("Downloading playlist...")
-                # First get the playlist info
-                info = ydl.extract_info(url, download=False)
-                if 'entries' in info:
-                    total_videos = len(info['entries'])
-                    print(f"Found {total_videos} videos in playlist")
-                    
-                    # Download each video individually
-                    for i, entry in enumerate(info['entries'], 1):
-                        print(f"\nProcessing video {i}/{total_videos}: {entry.get('title', 'Unknown Title')}")
-                        try:
-                            # Download the video
-                            ydl.download([entry['url']])
-                            
-                            # Find the downloaded file
-                            files = [f for f in os.listdir(output_path) if f.endswith(('.webm', '.m4a'))]
-                            if files:
-                                # Convert the most recently downloaded file
-                                latest_file = max(files, key=lambda x: os.path.getctime(os.path.join(output_path, x)))
-                                convert_to_mp3(os.path.join(output_path, latest_file))
-                        except Exception as e:
-                            print(f"Error processing video {i}: {str(e)}")
-                            continue
-            else:
-                print("Downloading single video...")
-                ydl.download([url])
-                # Convert any downloaded files
-                files = [f for f in os.listdir(output_path) if f.endswith(('.webm', '.m4a'))]
-                for file in files:
-                    convert_to_mp3(os.path.join(output_path, file))
+        path_layout = QHBoxLayout()
+        self.path_label = QLabel("Download Path:")
+        self.path_input = QLineEdit()
+        self.path_input.setReadOnly(True)
+        self.path_input.setText(os.path.join(os.path.expanduser("~"), "Downloads"))
+        self.browse_button = QPushButton("Browse")
+        self.browse_button.clicked.connect(self.browse_path)
+        path_layout.addWidget(self.path_label)
+        path_layout.addWidget(self.path_input)
+        path_layout.addWidget(self.browse_button)
+        self.layout.addLayout(path_layout)
 
-        # Final check of downloaded files
-        files = os.listdir(output_path)
-        if not files:
-            print("\nNo files were downloaded. There might be an issue with the URL or the download process.")
-        else:
-            print(f"\nDownload completed! Files are saved in: {output_path}")
-            print("Downloaded MP3 files:")
-            mp3_files = [f for f in files if f.endswith('.mp3')]
-            if mp3_files:
-                for file in mp3_files:
-                    print(f"- {file}")
-            else:
-                print("No MP3 files were created. Check the output directory for other file formats.")
-                print("All files in directory:")
-                for file in files:
-                    print(f"- {file}")
+        self.progress_bar = QProgressBar()
+        self.progress_bar.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.layout.addWidget(self.progress_bar)
 
-    except Exception as e:
-        print(f"An error occurred: {str(e)}")
-        if "ffmpeg" in str(e).lower():
-            print("\nFFmpeg error detected. Please ensure ffmpeg.exe is in the same directory as this script.")
+        button_layout = QHBoxLayout()
+        self.download_button = QPushButton("Download")
+        self.download_button.clicked.connect(self.start_download)
+        self.cancel_button = QPushButton("Cancel")
+        self.cancel_button.clicked.connect(self.cancel_download)
+        self.cancel_button.setEnabled(False)
+        button_layout.addWidget(self.download_button)
+        button_layout.addWidget(self.cancel_button)
+        self.layout.addLayout(button_layout)
+
+    def browse_path(self):
+        path = QFileDialog.getExistingDirectory(self, "Select Download Directory")
+        if path:
+            self.path_input.setText(path)
+
+    def start_download(self):
+        url = self.url_input.text().strip()
+        if not url:
+            QMessageBox.warning(self, "Error", "Please enter a YouTube URL")
+            return
+
+        output_path = self.path_input.text()
+        video_resolution = self.resolution_combo.currentText()
+        audio_bitrate = self.bitrate_combo.currentText()
+
+        self.download_thread = DownloadThread(url, output_path, video_resolution, audio_bitrate)
+        self.download_thread.progress.connect(self.update_progress)
+        self.download_thread.finished.connect(self.download_finished)
+        self.download_thread.error.connect(self.show_error)
+
+        self.download_button.setEnabled(False)
+        self.cancel_button.setEnabled(True)
+        self.progress_bar.setValue(0)
+
+        self.download_thread.start()
+
+    def cancel_download(self):
+        if self.download_thread and self.download_thread.isRunning():
+            self.download_thread.terminate()
+            self.download_thread.wait()
+            self.reset_ui()
+
+    def update_progress(self, value):
+        self.progress_bar.setValue(value)
+
+    def download_finished(self):
+        QMessageBox.information(self, "Success", "Download completed successfully!")
+        self.reset_ui()
+
+    def show_error(self, error_message):
+        QMessageBox.critical(self, "Error", f"An error occurred: {error_message}")
+        self.reset_ui()
+
+    def reset_ui(self):
+        self.download_button.setEnabled(True)
+        self.cancel_button.setEnabled(False)
+        self.progress_bar.setValue(0)
 
 def main():
-    print("YouTube Downloader")
-    print("1. Download Video")
-    print("2. Download Audio")
-    choice = input("Enter your choice (1 or 2): ")
-    
-    # Get download path
-    download_path = get_download_path()
-    
-    url = input("Enter YouTube URL (video or playlist): ")
-    
-    if choice == "1":
-        download_video(url, download_path)
-    elif choice == "2":
-        download_audio(url, download_path)
-    else:
-        print("Invalid choice!")
+    app = QApplication(sys.argv)
+    window = YouTubeDownloaderGUI()
+    window.show()
+    sys.exit(app.exec())
 
 if __name__ == "__main__":
     main() 

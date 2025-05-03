@@ -11,16 +11,8 @@ a = Analysis(
     ['youtube_downloader_gui.py'],
     pathex=[],
     binaries=[],
-    datas=pyqt6_datas,
-    hiddenimports=[
-        'PyQt6',
-        'PyQt6.QtCore',
-        'PyQt6.QtGui',
-        'PyQt6.QtWidgets',
-        'PyQt6.sip',
-        'yt_dlp',
-        'moviepy'
-    ],
+    datas=[],
+    hiddenimports=[],
     hookspath=[],
     hooksconfig={},
     runtime_hooks=[],
@@ -52,6 +44,5 @@ exe = EXE(
     argv_emulation=False,
     target_arch=None,
     codesign_identity=None,
-    entitlements_file=None,
-    icon='NONE'
+    entitlements_file=None
 ) 
