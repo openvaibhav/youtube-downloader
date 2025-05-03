@@ -4,6 +4,7 @@ from PyInstaller.utils.hooks import collect_data_files
 
 block_cipher = None
 
+# Collect all PyQt6 data files (plugins, etc.)
 pyqt6_datas = collect_data_files('PyQt6')
 
 a = Analysis(
