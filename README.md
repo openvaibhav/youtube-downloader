@@ -1,3 +1,8 @@
+> **Notice**
+>
+> This repository has been archived and is no longer maintained.
+> It is read-only thou it can or may receive updates or bug fixes if my mind changes.
+
 # YouTube Downloader
 
 A Python application to download YouTube videos or extract audio from videos and playlists. Available in both command-line and GUI versions.
